@@ -17,6 +17,7 @@ on:
     # only these branches would trigger the workflow
     branches:
       - main
+      - master
       # * - any charackters other than slashes
       - 'dev-*'
       # ** - any charackters including slashes
