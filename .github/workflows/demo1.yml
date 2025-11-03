@@ -22,7 +22,7 @@ on:
       # ** - any charackters including slashes
       - 'feature/**'
       # if pr or commit changes files in a specific folder
-    paths:
+    paths: 'src'
     # if pr or commit changes files not in a specific folder
     paths-ignore: '.github/workflows/*'
 jobs:
