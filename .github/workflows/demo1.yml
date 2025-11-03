@@ -5,6 +5,7 @@ on:
     # we can also use this way
       # - opened
       # - synchronize
+      # will work for targeting branch
     branches:
       - main
       # * - any charackters other than slashes
