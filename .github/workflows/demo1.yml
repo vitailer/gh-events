@@ -5,7 +5,26 @@ on:
     # we can also use this way
       # - opened
       # - synchronize
+    branches:
+      - main
+      # * - any charackters other than slashes
+      - 'dev-*'
+      # ** - any charackters including slashes
+      - 'feature/**'
   workflow_dispatch:
+  push:
+    # filter supports for push and pull_request events
+    # only these branches would trigger the workflow
+    branches:
+      - main
+      # * - any charackters other than slashes
+      - 'dev-*'
+      # ** - any charackters including slashes
+      - 'feature/**'
+      # if pr or commit changes files in a specific folder
+    paths:
+    # if pr or commit changes files not in a specific folder
+    paths-ignore: '.github/workflows/*'
 jobs:
   deploy:
     runs-on: ubuntu-latest
