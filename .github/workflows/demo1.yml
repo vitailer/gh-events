@@ -11,6 +11,8 @@ on:
       - 'dev-*'
       # ** - any charackters including slashes
       - 'feature/**'
+    # if pr or commit changes files in a specific folder
+    paths: 'src'
   workflow_dispatch:
   push:
     # filter supports for push and pull_request events
@@ -22,8 +24,6 @@ on:
       - 'dev-*'
       # ** - any charackters including slashes
       - 'feature/**'
-      # if pr or commit changes files in a specific folder
-    paths: 'src'
     # if pr or commit changes files not in a specific folder
     paths-ignore: '.github/workflows/*'
 jobs:
