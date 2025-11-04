@@ -39,7 +39,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Get build artifacts
-        uses: actions/download-artifacts@4
+        uses: actions/download-artifact@4
         # because can be many artifact actions uploaded
         # we specify which one needs to be used
         # name has to be th same as we used in actions/upload-artifact
