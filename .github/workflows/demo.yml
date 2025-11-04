@@ -29,6 +29,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: dist-files
+          # npm run build will generate the dist folder
+          # and artifacts will include doth files from project directory
           path: |
             dist
             package.json
@@ -36,5 +38,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Get build artifacts
+        uses: actions/download-artifacts@4
+        # because can be many artifact actions uploaded
+        # we specify which one needs to be used
+        # name has to be th same as we used in actions/upload-artifact
+        with:
+          name: dist-files
+      # The “ls” is one of the most powerful commands that displays all the directories and files from the system.
+      - name: Output content
+        run: ls
       - name: Deploy
         run: echo "Deploying..."
