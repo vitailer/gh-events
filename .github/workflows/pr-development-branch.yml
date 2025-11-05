@@ -1,0 +1,195 @@
+name: Validate PR on development branch
+on: 
+    pull_request:
+      types: [opened, synchronize]
+      branches: [ development ]
+      paths:
+        - 'force-app/**'
+jobs:
+    validate-deployment-on-develop-org:
+      runs-on: ubuntu-latest
+      if: ${{ github.actor != 'dependabot[bot]' }}
+      steps:
+        - name: 'checkout repository'
+          uses: actions/checkout@v4
+          with: 
+            fetch-depth: 0
+        - name: 'setup node.Js'
+          uses: actions/setup-node@v4
+          with:
+            node-version: '18'
+        - name: Install Salesforce CLI
+          run: npm install @salesforce/cli --global
+
+      # 4. Установка PMD (Code Quality)
+        - name: Install PMD
+          run: |
+            wget https://github.com/pmd/pmd/releases/download/pmd_releases%2F6.55.0/pmd-bin-6.55.0.zip
+            unzip pmd-bin-6.55.0.zip
+            echo "PMD downloaded"
+
+      # 5. PMD-Apex анализ через ruleSet
+        - name: Run PMD validation
+          run: |
+            mkdir -p pmd-reports
+            java -cp "pmd-bin-6.55.0/lib/*" net.sourceforge.pmd.PMD \
+              -d force-app/main/default \
+              -R config/pmd/ruleset.xml \
+              -f text \
+              -r pmd-reports/pmd-report.txt
+          continue-on-error: true
+
+        - name: Print PMD report
+          run: cat pmd-reports/pmd-report.txt
+        # 6. Отправить ошибку если есть PMD сообщения
+        # - name: Check for PMD errors
+        #   id: pmd_check
+        #   run: |
+        #     if grep -q '^' pmd-reports/pmd-report.txt; then
+        #       echo "PMD found issues!"
+        #       exit 1
+        #     else
+        #       echo "No PMD issues found."
+        #     fi
+
+        - name: 'Install sfdx-git-delta plugin'
+          run: |
+            echo y | sf plugins install sfdx-git-delta
+            sf plugins
+
+        # Install java as it is required for the next step
+        - name: 'Installing java'
+          run: |
+            sudo apt-get update
+            sudo apt install default-jdk
+
+        # Install SFDX scanner
+        - name: 'Installing SFDX scanner'
+          run: sf plugins install @salesforce/sfdx-scanner
+  
+        # 7. Аутентификация в DevHub через secret
+        - name: Authorize DevHub
+          shell: bash
+          env:
+            SF_CLIENT_ID: ${{ secrets.SF_CLIENT_ID }}
+            SF_JWT_KEY: ${{ secrets.SF_JWT_KEY }}
+            SF_ORG_USERNAME: ${{ secrets.SF_ORG_USERNAME }}
+            SF_LOGIN_URL: ${{ secrets.SF_LOGIN_URL }}
+          run: |
+            echo "$SF_JWT_KEY" > server.key
+            sf org login jwt \
+              -i "$SF_CLIENT_ID" \
+              -f server.key \
+              -o "$SF_ORG_USERNAME" \
+              -a DevHub \
+              -r "${SF_LOGIN_URL:-https://login.salesforce.com}" \
+              -d
+
+        # - name: Create Org Shape
+        #   run: |
+        #     sf org create shape --target-org DevHub
+        # 8. Создание Scratch Org (на 1 день)
+        - name: Create Scratch Org
+          run: | 
+            sf org create scratch \
+              --definition-file config/project-scratch-def.json \
+              --alias prOrg \
+              --duration-days 1 \
+              --set-default \
+              --wait 20 \
+              --target-dev-hub DevHub
+
+        - name: Print scratch org login link
+          run: |
+            # Print the one-click login URL
+            echo "Login to Scratch Org:"
+            sf org open --target-org prOrg --url-only
+
+            # Optional: Also print username
+            echo "Org username:"
+            sf org display --target-org prOrg --json | jq -r '.result.username'
+  
+        # SELECT Id, Description, ExpirationDate, Name, OrgName, ScratchOrg, ScratchOrgInfoId, SignupUsername FROM ActiveScratchOrg
+        # 9. Deploy кода в Scratch org
+        # run: sfdx force:source:push -u prOrg
+        - name: Push metadata to Scratch Org
+          run: sf project deploy start --source-dir force-app --target-org prOrg
+        # 10. Прогон Apex тестов
+        # sfdx force:apex:test:run -u prOrg --resultformat human --codecoverage --wait 30 --testlevel RunLocalTests --outputdir test-results > test-results/apexTestResult.log || true
+
+        - name: 'Create delta packages for new, modified or deleted metadata'
+          run: |
+            mkdir -p changed-sources
+            sf sgd:source:delta \
+              --to "HEAD" \
+              --from "HEAD^" \
+              --output "changed-sources" \
+              --generate-delta \
+              --source "force-app/"
+
+        - name: Scan code
+          run: |
+            cd changed-sources
+            sf scanner run \
+              --format sarif \
+              --target . \
+              --category "Design,Best Practices,Performance" \
+              --outfile 'apexScanResults.sarif'
+            cd ..
+
+        - name: Print Scan code report
+          run: cat changed-sources/apexScanResults.sarif
+
+        # - name: Upload SARIF file
+        #   uses: github/codeql-action/upload-sarif@v2
+        #   with:
+        #     sarif_file: changed-sources/apexScanResults.sarif
+
+        - name: Run Apex tests
+          run: |
+            mkdir -p test-results
+            sf apex run test --target-org prOrg --result-format json --code-coverage --wait 30 --test-level RunLocalTests --output-dir test-results
+
+        - name: Show Apex Test Report
+          run: |
+            ls -l test-results
+            cat test-results/*.json
+        
+        # 11. Анализ Apex тестов на ошибки
+        - name: Check Apex Test Results
+          run: |
+            if grep -q "Fail" test-results/*.json; then
+              echo "Some Apex tests failed:"
+              grep -A 3 "Fail" test-results/*.json;
+              exit 1
+            else
+              echo "All Apex tests passed"
+            fi 
+
+        - name: Fail if test coverage is below threshold
+          run: |
+            THRESHOLD=75
+            RESULT_FILE=$(ls test-results/test-result-*.json | grep -v codecoverage | head -1)
+            if [ -z "$RESULT_FILE" ]; then
+              echo "No test result JSON file found!"
+              exit 2
+            fi
+
+            echo "Result file: $RESULT_FILE"
+            jq '.' "$RESULT_FILE"
+
+            COVERAGE=$(jq -r '.summary.orgWideCoverage' "$RESULT_FILE" | tr -d '%"')
+            if [ -z "$COVERAGE" ]; then
+              echo "Coverage is not found! Check JSON structure above."
+              exit 2
+            fi
+
+            echo "Total coverage: $COVERAGE%"
+            if [ "$(echo "$COVERAGE < $THRESHOLD" | bc -l)" = "1" ]; then
+              echo "Test coverage below threshold ($THRESHOLD%)!"
+              exit 1
+            fi
+
+        - name: Delete Scratch Org
+          # if: always()
+          run: sf org delete scratch --target-org prOrg --no-prompt
